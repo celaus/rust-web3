@@ -124,7 +124,7 @@ impl Http {
         })
     }
 
-    pub fn with_builder<C>(url: &str, builder: hyper::client::Builder) -> error::Result<Self> {
+    pub fn with_builder(url: &str, builder: hyper::client::Builder) -> error::Result<Self> {
         #[cfg(feature = "http-tls")]
         let (proxy_env, connector) = { (env::var("HTTPS_PROXY"), hyper_tls::HttpsConnector::new()) };
         #[cfg(feature = "http-rustls")]
