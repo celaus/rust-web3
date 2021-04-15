@@ -105,7 +105,62 @@ impl Http {
             }
             Err(_) => Client::NoProxy(hyper::Client::builder().build(connector)),
         };
+        let basic_auth = {
+            let url = Url::parse(url)?;
+            let user = url.username();
+            let auth = format!("{}:{}", user, url.password().unwrap_or_default());
+            if &auth == ":" {
+                None
+            } else {
+                Some(HeaderValue::from_str(&format!("Basic {}", base64::encode(&auth)))?)
+            }
+        };
 
+        Ok(Http {
+            id: Arc::new(AtomicUsize::new(1)),
+            url: url.parse()?,
+            basic_auth,
+            client,
+        })
+    }
+
+    pub fn with_builder<C>(url: &str, builder: hyper::client::Builder) -> error::Result<Self> {
+        #[cfg(feature = "http-tls")]
+        let (proxy_env, connector) = { (env::var("HTTPS_PROXY"), hyper_tls::HttpsConnector::new()) };
+        #[cfg(feature = "http-rustls")]
+        let (proxy_env, connector) = {
+            (
+                env::var("HTTPS_PROXY"),
+                hyper_rustls::HttpsConnector::with_webpki_roots(),
+            )
+        };
+        #[cfg(not(any(feature = "http-tls", feature = "http-rustls")))]
+        let (proxy_env, connector) = { (env::var("HTTP_PROXY"), hyper::client::HttpConnector::new()) };
+
+        let client = match proxy_env {
+            Ok(proxy) => {
+                let mut url = url::Url::parse(&proxy)?;
+                let username = String::from(url.username());
+                let password = String::from(url.password().unwrap_or_default());
+
+                url.set_username("").map_err(|_| Error::Internal)?;
+                url.set_password(None).map_err(|_| Error::Internal)?;
+
+                let uri = url.to_string().parse()?;
+
+                let mut proxy = hyper_proxy::Proxy::new(hyper_proxy::Intercept::All, uri);
+
+                if username != "" {
+                    let credentials = headers::Authorization::basic(&username, &password);
+                    proxy.set_authorization(credentials);
+                }
+
+                let proxy_connector = hyper_proxy::ProxyConnector::from_proxy(connector, proxy)?;
+
+                Client::Proxy(builder.build(proxy_connector))
+            }
+            Err(_) => Client::NoProxy(builder.build(connector)),
+        };
         let basic_auth = {
             let url = Url::parse(url)?;
             let user = url.username();
